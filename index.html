@@ -370,8 +370,10 @@ async function gemini(prompt,opts,asJson){
   const body={contents:[{role:"user",parts}]};
   if(asJson)body.generationConfig={responseMimeType:"application/json"};
   const models=[CFG.model||"gemini-flash-latest"];
-  if(!models.includes("gemini-2.5-flash"))models.push("gemini-2.5-flash");
+  ["gemini-2.5-flash","gemini-2.5-flash-lite"].forEach(m=>{if(!models.includes(m))models.push(m)});
   let last=null;
+  for(let round=0;round<2;round++){
+  if(round===1){if(!last||(last.code!=="http"&&last.code!=="rate_limited"))break;await new Promise(r=>setTimeout(r,2500))}
   for(const model of models){
     const base="https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(model)+":generateContent";
     /* primero con cabecera; si la clave es rechazada, se prueba con la clave en la dirección */
@@ -391,10 +393,11 @@ async function gemini(prompt,opts,asJson){
       let msg="";try{const j=await res.json();msg=(j.error&&j.error.message)||""}catch(e){}
       const code=res.status===429?"rate_limited":res.status===404?"no_model":(res.status===400||res.status===401||res.status===403)?"bad_key":"http";
       last=aiErr(code,"Google respondió "+res.status+(msg?": "+msg.slice(0,220):""));
-      if(res.status===404)break;          /* modelo distinto */
-      if(res.status===429||res.status>=500)throw last;
+      if(res.status===404||res.status===429||res.status>=500)break;   /* probar otro modelo */
     }
   }
+  }
+  if(last&&(last.code==="http"||last.code==="rate_limited"))last.detail="Google está saturado ahora mismo (probé "+models.length+" modelos). Inténtalo de nuevo en unos minutos. "+last.detail;
   throw last||aiErr("network","No se pudo conectar con Google");
 }
 function makeSample(){
