@@ -189,7 +189,7 @@ const planFor=d=>PLAN[parse(d).getDay()];
 const DEF={kind:"profile",sex:"m",age:30,weight:80,height:178,kcal:2100,prot:150,goal:"Perder grasa",goalWeight:0,goalDate:"",dayAdjust:true,
  habits:[{id:"creatina",name:"Creatina"},{id:"proteina",name:"Batido de proteína"},{id:"pasos",name:"8.000 pasos"},{id:"sueno",name:"Dormir antes de las 23:30"},{id:"agua",name:"2,5 L de agua"}],budgets:{}};
 const S={items:{},tab:"hoy",date:TODAY(),month:TODAY().slice(0,7),d:{},analysis:null,photo:null,photoUrl:"",advice:"",wkAI:null,
-  busy:{},err:{},lifts:[],scan:null,timer:{end:0,total:0},sleepAI:"",showMore:{}};
+  busy:{},err:{},testRes:null,lifts:[],scan:null,timer:{end:0,total:0},sleepAI:"",showMore:{}};
 let sample=null;
 let CFG={key:"",model:"gemini-flash-latest",pinHash:"",lastExport:""};
 const LS="mivida.v1",LC="mivida.cfg";
@@ -362,19 +362,40 @@ function macroBar(label,v,goal){
 }
 /* ================= IA gratuita: Google Gemini con tu propia clave ================= */
 function blobToB64(b){return new Promise((ok,ko)=>{const r=new FileReader();r.onload=()=>ok(String(r.result).split(",")[1]);r.onerror=ko;r.readAsDataURL(b)})}
+function aiErr(code,detail){const e=new Error(detail||code);e.code=code;e.detail=detail||"";return e}
 async function gemini(prompt,opts,asJson){
-  if(!CFG.key){const e=new Error("sin clave");e.code="no_key";throw e}
+  if(!CFG.key)throw aiErr("no_key");
   const parts=[{text:prompt}];
   if(opts&&opts.images){for(const im of opts.images)parts.push({inline_data:{mime_type:"image/jpeg",data:await blobToB64(im)}})}
   const body={contents:[{role:"user",parts}]};
   if(asJson)body.generationConfig={responseMimeType:"application/json"};
-  const res=await fetch("https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(CFG.model||"gemini-flash-latest")+":generateContent",
-    {method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":CFG.key},body:JSON.stringify(body)});
-  if(!res.ok){const e=new Error("http "+res.status);e.code=res.status===429?"rate_limited":(res.status===400||res.status===403||res.status===404)?"bad_key":"http";throw e}
-  const j=await res.json();
-  const text=((j.candidates||[])[0]&&j.candidates[0].content&&(j.candidates[0].content.parts||[]).map(p=>p.text||"").join(""))||"";
-  if(!text){const e=new Error("vacío");e.code="empty";throw e}
-  return text;
+  const models=[CFG.model||"gemini-flash-latest"];
+  if(!models.includes("gemini-2.5-flash"))models.push("gemini-2.5-flash");
+  let last=null;
+  for(const model of models){
+    const base="https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(model)+":generateContent";
+    /* primero con cabecera; si la clave es rechazada, se prueba con la clave en la dirección */
+    for(const mode of ["header","query"]){
+      let res;
+      try{
+        res=await fetch(mode==="header"?base:base+"?key="+encodeURIComponent(CFG.key),
+          {method:"POST",headers:mode==="header"?{"Content-Type":"application/json","x-goog-api-key":CFG.key}:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      }catch(err){last=aiErr("network","No se pudo conectar con Google ("+(err&&err.message||"sin conexión")+")");continue}
+      if(res.ok){
+        const j=await res.json().catch(()=>null);
+        const cand=j&&(j.candidates||[])[0];
+        const text=cand&&cand.content&&(cand.content.parts||[]).map(p=>p.text||"").join("")||"";
+        if(!text){const why=(j&&j.promptFeedback&&j.promptFeedback.blockReason)||(cand&&cand.finishReason)||"respuesta vacía";throw aiErr("empty","Google no devolvió texto ("+why+")")}
+        return text;
+      }
+      let msg="";try{const j=await res.json();msg=(j.error&&j.error.message)||""}catch(e){}
+      const code=res.status===429?"rate_limited":res.status===404?"no_model":(res.status===400||res.status===401||res.status===403)?"bad_key":"http";
+      last=aiErr(code,"Google respondió "+res.status+(msg?": "+msg.slice(0,220):""));
+      if(res.status===404)break;          /* modelo distinto */
+      if(res.status===429||res.status>=500)throw last;
+    }
+  }
+  throw last||aiErr("network","No se pudo conectar con Google");
 }
 function makeSample(){
   const f=async(p,o)=>({text:await gemini(p,o,false)});
@@ -384,8 +405,8 @@ function makeSample(){
 async function ai(fn,key){
   S.busy[key]=true;S.err[key]="";render();
   try{return await fn()}
-  catch(e){const c=e&&e.code;
-    S.err[key]=c==="no_key"?"Falta la clave de IA. Añádela en Ajustes.":c==="bad_key"?"La clave de IA no es válida o el modelo no existe. Revísalos en Ajustes.":c==="rate_limited"?"Has llegado al límite gratuito por ahora. Espera un minuto e inténtalo otra vez.":"La IA no respondió bien. Comprueba la conexión e inténtalo de nuevo.";
+  catch(e){const c=e&&e.code,d=e&&e.detail?" Detalle: "+e.detail:"";
+    S.err[key]=c==="no_key"?"Falta la clave de IA. Añádela en Ajustes.":c==="bad_key"?"Google ha rechazado la clave o la petición."+d:c==="no_model"?"El modelo no existe."+d:c==="rate_limited"?"Has llegado al límite gratuito por ahora. Espera un minuto e inténtalo otra vez.":c==="network"||c==="empty"||c==="http"?(e.detail||"La IA no respondió."):"La IA contestó en un formato inesperado. Inténtalo de nuevo."+(e&&e.message?" ("+String(e.message).slice(0,80)+")":"");
     return null}
   finally{S.busy[key]=false;render()}
 }
@@ -802,7 +823,7 @@ function viewAjustes(){
    '<div class="row"><button data-act="applyCalc">Usar valores recomendados</button><button class="pri" data-act="saveProfile">Guardar</button></div></div>'+
   '<div class="card"><h2>IA gratuita (Gemini)</h2><p class="muted">Consigue tu clave en aistudio.google.com/apikey con una cuenta de Google y pulsa «Crear clave de API». Se guarda solo en este dispositivo. Google puede usar lo que envíes para mejorar sus productos con claves gratuitas, así que no subas nada privado.</p>'+
    '<div class="row"><div class="grow" style="flex-basis:220px"><label for="c_key">Clave de Gemini</label><input id="c_key" data-c="key" type="password" autocomplete="off" value="'+esc(CFG.key)+'" placeholder="AIza..."></div><div class="grow"><label for="c_model">Modelo</label><input id="c_model" data-c="model" value="'+esc(CFG.model)+'"></div></div>'+
-   '<div class="row" style="margin-top:12px"><button class="pri" data-act="saveCfg">Guardar ajustes de IA</button></div></div>'+
+   '<div class="row" style="margin-top:12px"><button class="pri" data-act="saveCfg">Guardar ajustes de IA</button><button data-act="testAI"'+(S.busy.test?" disabled":"")+'>'+(S.busy.test?"Probando…":"Probar la IA")+'</button></div>'+(S.testRes?'<p class="'+(S.testRes.ok?"ai":"muted")+'" role="status">'+esc(S.testRes.msg)+'</p>':"")+errP("test")+'</div>'+
   '<div class="card"><h2>Copia de seguridad</h2><p class="muted">Tus datos viven en este navegador y no se sincronizan con otros dispositivos. Descarga una copia de vez en cuando, y úsala para pasarlos a otro móvil.'+(CFG.lastExport?" Última copia: "+esc(sdate(CFG.lastExport))+".":"")+'</p>'+
    '<div class="row"><button class="pri" data-act="export">Descargar copia</button><button data-act="import">Cargar copia</button><input id="importFile" type="file" accept="application/json,.json" hidden></div>'+
    '<h3>Excel (CSV)</h3><div class="row"><button data-exp="gastos">Gastos</button><button data-exp="comidas">Comidas</button><button data-exp="entrenos">Entrenos</button><button data-exp="peso">Peso</button></div></div>'+
@@ -885,6 +906,9 @@ document.addEventListener("click",async e=>{
     case "applyCalc":p.kcal=tdee()-450;p.prot=Math.round(curWeight()*1.8);lsSave();render();break;
     case "saveProfile":lsSave();flash("Perfil guardado.");render();break;
     case "saveCfg":cfgSave();flash("Ajustes de IA guardados.");break;
+    case "testAI":{cfgSave();S.testRes=null;
+      const r=await ai(()=>sample("Responde solo con la palabra: listo"),"test");
+      if(r)S.testRes={ok:true,msg:"La IA funciona. Respuesta: "+r.text.trim().slice(0,40)};else S.testRes=null;render();break}
     case "export":download("mi-vida-"+TODAY()+".json",JSON.stringify(S.items),"application/json");CFG.lastExport=TODAY();cfgSave();render();break;
     case "import":$("#importFile").click();break;
     case "analyze":analyzeMeal();break;
