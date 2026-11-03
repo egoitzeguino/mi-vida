@@ -161,12 +161,12 @@ const MOODS=["Fatal","Mal","Normal","Bien","Genial"];
 const PLAN={
  1:{tag:"Fuerza",title:"Fuerza tren superior y core",min:50,fb:false,
     why:"Llegas descansado del fin de semana y el martes juegas: se trabaja el tren superior y no se carga la pierna.",
-    ex:["Press banca 4×8","Remo con barra 4×8","Press militar con mancuernas 3×10","Jalón al pecho o dominadas 3×10","Fondos en banco 3×12","Plancha 3×45 s"]},
+    ex:["Flexiones 4×10-15 (con los pies elevados si te resultan fáciles)","Remo a una mano con mancuerna 4×12 por lado","Press de hombro con mancuerna 3×12 por lado","Remo con banda elástica anclada en una puerta 3×15","Fondos de tríceps en una silla 3×12","Plancha 3×45 s"]},
  2:{tag:"Fútbol",title:"Fútbol",min:90,fb:true,why:"Entreno de fútbol. Come carbohidrato 2-3 h antes y proteína después.",ex:[]},
  3:{tag:"Fútbol",title:"Fútbol",min:90,fb:true,why:"Entreno de fútbol. Hidrátate bien, ayer ya jugaste.",ex:[]},
  4:{tag:"Fuerza",title:"Fuerza ligera y cardio suave",min:45,fb:false,
     why:"Tienes fútbol el viernes y partido el sábado: pierna ligera, sin llegar al fallo, y cardio de zona 2 para gastar grasa sin fatigar.",
-    ex:["Peso muerto rumano ligero 3×10","Zancadas con poco peso 3×10","Remo con mancuerna 3×12","Flexiones 3×15","Face pull o remo al mentón 3×15","20 min de bici o trote suave a ritmo de charla"]},
+    ex:["Peso muerto rumano a una pierna con mancuerna 3×10 por lado (ligero)","Sentadilla goblet con mancuerna 3×12, sin llegar al fallo","Puente de glúteo con banda sobre las rodillas 3×15","Curl de bíceps con banda 3×12","Face pull con banda 3×15","20 min de caminata rápida, bici o trote suave a ritmo de charla"]},
  5:{tag:"Fútbol",title:"Fútbol",min:90,fb:true,why:"Último entreno antes del partido. Intensidad moderada, come bien esta noche y duerme.",ex:[]},
  6:{tag:"Partido",title:"Partido",min:100,fb:true,why:"Día de partido. Carbohidratos en la comida previa y proteína con carbohidrato al terminar.",ex:[]},
  0:{tag:"Descanso",title:"Descanso activo",min:60,fb:false,
@@ -186,7 +186,7 @@ const DAYNOTE={
 const planFor=d=>PLAN[parse(d).getDay()];
 
 /* ================= estado ================= */
-const DEF={kind:"profile",sex:"m",age:30,weight:80,height:178,kcal:2100,prot:150,goal:"Perder grasa",goalWeight:0,goalDate:"",dayAdjust:true,
+const DEF={kind:"profile",sex:"m",age:30,weight:80,height:178,kcal:2100,prot:150,goal:"Perder grasa",equipment:"Entreno en casa, sin gimnasio. Solo tengo una mancuerna de hasta 10 kg y una banda elástica de 30 kg.",dislikes:[],goalWeight:0,goalDate:"",dayAdjust:true,
  habits:[{id:"creatina",name:"Creatina"},{id:"proteina",name:"Batido de proteína"},{id:"pasos",name:"8.000 pasos"},{id:"sueno",name:"Dormir antes de las 23:30"},{id:"agua",name:"2,5 L de agua"}],budgets:{}};
 const S={items:{},tab:"hoy",date:TODAY(),month:TODAY().slice(0,7),d:{},analysis:null,photo:null,photoUrl:"",advice:"",wkAI:null,
   busy:{},err:{},testRes:null,lifts:[],scan:null,timer:{end:0,total:0},sleepAI:"",showMore:{}};
@@ -449,6 +449,9 @@ async function resizeImage(file){
   URL.revokeObjectURL(url);
   return await new Promise(ok=>c.toBlob(ok,"image/jpeg",0.85));
 }
+const dislikesText=()=>{const d=(prof().dislikes||[]);return d.length?d.join(", "):""};
+const foodRule=()=>dislikesText()?" Alimentos que NO le gustan o no puede comer y que NO debes proponer en ningún plato ni ingrediente: "+dislikesText()+".":"";
+const gearRule=()=>" Material de entrenamiento: "+(prof().equipment||"ninguno")+". Entrena SOLO en casa con ese material y su propio peso corporal; no propongas máquinas, barras ni pesas que no tenga. Como la carga es limitada, progresa con más repeticiones, ejercicios a una pierna o un brazo, pausas y tempo lento, y cambios de dificultad de la banda.";
 function injuriesText(){const i=all("injury").filter(x=>x.active);return i.length?i.map(x=>x.text).join("; "):"ninguna"}
 function ctxText(){
   const t=S.date,ms=mealsOn(t),p=prof(),rec=recovery();
@@ -459,7 +462,7 @@ function ctxText(){
    ". Meta de hoy: "+dayTarget(t)+" kcal y "+p.prot+" g de proteína. Hoy es "+DIAS[parse(t).getDay()]+" y el plan es: "+planFor(t).title+
    ". Calendario fijo: juega al fútbol martes, miércoles y viernes, y tiene partido el sábado; lunes, jueves y domingo son libres. Comido hoy: "+eaten+
    ". Total hoy: "+Math.round(sum(ms,"kcal"))+" kcal, "+Math.round(sum(ms,"prot"))+" g de proteína. Entrenos de los últimos 7 días: "+w+
-   ". Estado de recuperación: "+["bueno","carga alta","necesita descanso"][rec.level]+(rec.reasons.length?" ("+rec.reasons.join("; ")+")":"")+". Molestias activas: "+injuriesText()+".";
+   ". Estado de recuperación: "+["bueno","carga alta","necesita descanso"][rec.level]+(rec.reasons.length?" ("+rec.reasons.join("; ")+")":"")+". Molestias activas: "+injuriesText()+"."+foodRule()+gearRule();
 }
 async function analyzeMeal(){
   const text=(S.d.mealText||"").trim();
@@ -535,7 +538,7 @@ async function mealPlan(){
   const mon=mondayOf(S.date),p=prof();
   const tg=[1,2,3,4,5,6,0].map(d=>DIAS[d]+": "+Math.round(num(p.kcal)+(p.dayAdjust?OFFSET[d]:0))+" kcal").join(", ");
   const favs=all("fav").map(f=>f.name).join(", ")||"ninguna";
-  const prompt="Eres un nutricionista deportivo en España. Crea un menú semanal (lunes a domingo) con desayuno, comida, merienda y cena para alguien que quiere "+p.goal.toLowerCase()+", con al menos "+p.prot+" g de proteína al día. Calorías objetivo por día: "+tg+". Notas: "+Object.entries(DAYNOTE).map(([d,n])=>DIAS[d]+": "+n).join(" ")+" Platos sencillos, baratos y fáciles de preparar. Comidas favoritas que puedes reutilizar: "+favs+
+  const prompt="Eres un nutricionista deportivo en España. Crea un menú semanal (lunes a domingo) con desayuno, comida, merienda y cena para alguien que quiere "+p.goal.toLowerCase()+", con al menos "+p.prot+" g de proteína al día. Calorías objetivo por día: "+tg+". Notas: "+Object.entries(DAYNOTE).map(([d,n])=>DIAS[d]+": "+n).join(" ")+" Platos sencillos, baratos y fáciles de preparar. Comidas favoritas que puedes reutilizar: "+favs+"."+foodRule()+
    '. Responde SOLO con JSON: {"dias":[{"dia":string,"kcal":number,"comidas":[{"momento":string,"plato":string,"kcal":number}]}],"compra":[{"seccion":string,"items":[string]}]}. La lista de la compra agrupa todo lo necesario para la semana con cantidades.';
   const r=await ai(()=>sample.json(prompt),"plan");
   if(r&&Array.isArray(r.dias)){put("mp_"+mon,{kind:"mealplan",week:mon,plan:r,checked:[]})}
@@ -631,6 +634,12 @@ function habitsBlock(date){
   return hs.map(h=>{const on=done.includes(h.id),st=streak(h.id);
     return '<label class="chk'+(on?" done":"")+'" style="text-transform:none;letter-spacing:0;font-size:15px;color:inherit;margin:0"><input type="checkbox" data-hab="'+esc(h.id)+'" data-date="'+date+'"'+(on?" checked":"")+'><span>'+esc(h.name)+'</span>'+(st>1?'<span class="pill" style="flex:none">'+st+' días</span>':"")+'</label>'}).join("");
 }
+function dislikesBlock(){
+  const d=prof().dislikes||[];
+  return '<p class="muted">La IA no los usará al sugerirte comidas ni en el menú semanal. Pon también alergias o intolerancias.</p>'+
+   (d.length?'<div class="row" style="margin-bottom:10px">'+d.map((x,i)=>'<span class="pill" style="display:inline-flex;align-items:center;gap:2px">'+esc(x)+'<button class="x" data-rmdis="'+i+'" aria-label="Quitar '+esc(x)+'" style="padding:0 4px;font-size:16px;color:inherit">×</button></span>').join("")+'</div>':"")+
+   '<div class="row"><div class="grow" style="flex-basis:200px"><label for="dis">Añadir alimento</label><input id="dis" data-d="dis" value="'+esc(S.d.dis||"")+'" placeholder="Brócoli, atún, hígado"></div><button data-act="addDis" style="align-self:flex-end">Añadir</button></div>';
+}
 function suggCard(){
   const s=suggestion();if(!s)return "";
   const p=prof();
@@ -699,6 +708,7 @@ function viewComida(){
     return '<div class="card"><div class="row between"><h2>'+m+'</h2><b class="num">'+Math.round(sum(l,"kcal"))+' kcal</b></div><div class="list">'+l.map(x=>
      '<div class="item"><div class="t">'+esc(x.text)+'<div class="muted">P '+Math.round(x.prot||0)+' · C '+Math.round(x.carb||0)+' · G '+Math.round(x.grasa||0)+'</div></div><div class="r">'+Math.round(x.kcal)+'<button class="x" data-fav="'+x.id+'" aria-label="Guardar como favorita" title="Guardar como favorita">☆</button><button class="x" data-del="'+x.id+'" aria-label="Borrar">×</button></div></div>').join("")+'</div></div>'}).join("");
   if(!ms.length)h+='<div class="card"><p class="muted">Todavía no hay comidas este día. Describe lo que has comido, sube una foto o escanea un producto.</p></div>';
+  h+='<div class="card"><h2>Alimentos que no me gustan</h2>'+dislikesBlock()+'</div>';
   /* menú semanal y lista de la compra */
   const mon=mondayOf(d),mp=S.items["mp_"+mon];
   h+='<div class="card"><h2>Menú y compra de la semana</h2><p class="muted">Semana del '+esc(sdate(mon))+'. La IA ajusta las calorías a cada día de entreno y partido.</p>'+
@@ -851,6 +861,8 @@ function viewAjustes(){
    '<label class="chk" style="text-transform:none;letter-spacing:0;font-size:15px;color:inherit;margin:10px 0 0"><input type="checkbox" data-p="dayAdjust"'+(p.dayAdjust?" checked":"")+'><span>Ajustar las calorías según el día (más antes y durante el fútbol, menos el día de descanso)</span></label>'+
    '<p class="muted">Gasto estimado: <b>'+tdee()+' kcal</b> con tu peso actual ('+r1(curWeight())+' kg). Para perder grasa a buen ritmo: unas <b>'+(tdee()-450)+' kcal</b> y '+Math.round(curWeight()*1.8)+' g de proteína.</p>'+
    '<div class="row"><button data-act="applyCalc">Usar valores recomendados</button><button class="pri" data-act="saveProfile">Guardar</button></div></div>'+
+  '<div class="card"><h2>Alimentos que no me gustan</h2>'+dislikesBlock()+'</div>'+
+  '<div class="card"><h2>Material de entreno</h2><p class="muted">La IA solo te propone ejercicios que puedas hacer con esto.</p><label for="p_eq">Qué tienes en casa</label><textarea id="p_eq" data-p="equipment">'+esc(p.equipment||"")+'</textarea></div>'+
   '<div class="card"><h2>IA gratuita (Gemini)</h2><p class="muted">Consigue tu clave en aistudio.google.com/apikey con una cuenta de Google y pulsa «Crear clave de API». Se guarda solo en este dispositivo. Google puede usar lo que envíes para mejorar sus productos con claves gratuitas, así que no subas nada privado.</p>'+
    '<div class="row"><div class="grow" style="flex-basis:220px"><label for="c_key">Clave de Gemini</label><input id="c_key" data-c="key" type="password" autocomplete="off" value="'+esc(CFG.key)+'" placeholder="AIza..."></div><div class="grow"><label for="c_model">Modelo (auto = el mejor disponible)</label><input id="c_model" data-c="model" value="'+esc(CFG.model)+'"></div></div>'+
    '<div class="row" style="margin-top:12px"><button class="pri" data-act="saveCfg">Guardar ajustes de IA</button><button data-act="testAI"'+(S.busy.test?" disabled":"")+'>'+(S.busy.test?"Probando…":"Probar la IA")+'</button></div>'+(S.testRes?'<p class="'+(S.testRes.ok?"ai":"muted")+'" role="status">'+esc(S.testRes.msg)+'</p>':"")+errP("test")+'</div>'+
@@ -925,6 +937,7 @@ document.addEventListener("click",async e=>{
   if(ds.etype){S.d.etype=ds.etype;render();return}
   if(ds.exp){exportCsv(ds.exp);return}
   if(ds.injtoggle){const i=S.items[ds.injtoggle];if(i){i.active=!i.active;lsSave();render()}return}
+  if(ds.rmdis!==undefined){const p=prof();p.dislikes=(p.dislikes||[]).filter((_,i)=>i!==+ds.rmdis);lsSave();render();return}
   if(ds.rmhab){const p=prof();p.habits=(p.habits||[]).filter(h=>h.id!==ds.rmhab);lsSave();render();return}
   const a=ds.act;if(!a)return;
   const p=prof();
@@ -998,6 +1011,10 @@ document.addEventListener("click",async e=>{
       const kg=num(S.d.wkg);
       if(kg<30||kg>300){flash("Escribe un peso válido en kg.");break}
       const w={kind:"weight",date:S.date,kg,waist:num(S.d.wwaist)||null,ts:Date.now()};S.d.wkg="";S.d.wwaist="";put("w_"+S.date,w);break}
+    case "addDis":{
+      const items=(S.d.dis||"").split(/[,;\n]/).map(x=>x.trim()).filter(Boolean);if(!items.length)break;
+      const cur=p.dislikes||[];items.forEach(x=>{if(!cur.some(y=>y.toLowerCase()===x.toLowerCase()))cur.push(x)});
+      p.dislikes=cur;lsSave();S.d.dis="";render();break}
     case "addHab":{
       const n=(S.d.hname||"").trim();if(!n)break;
       p.habits=(p.habits||[]).concat([{id:uid("h"),name:n}]);lsSave();S.d.hname="";render();break}
