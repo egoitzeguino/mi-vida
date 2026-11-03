@@ -191,13 +191,13 @@ const DEF={kind:"profile",sex:"m",age:30,weight:80,height:178,kcal:2100,prot:150
 const S={items:{},tab:"hoy",date:TODAY(),month:TODAY().slice(0,7),d:{},analysis:null,photo:null,photoUrl:"",advice:"",wkAI:null,
   busy:{},err:{},testRes:null,lifts:[],scan:null,timer:{end:0,total:0},sleepAI:"",showMore:{}};
 let sample=null;
-let CFG={key:"",model:"gemini-flash-latest",pinHash:"",lastExport:""};
+let CFG={key:"",model:"auto",models:[],modelsAt:"",pinHash:"",lastExport:""};
 const LS="mivida.v1",LC="mivida.cfg";
 function lsLoad(){try{S.items=JSON.parse(localStorage.getItem(LS)||"{}")}catch(e){S.items={}}
   if(!S.items||typeof S.items!=="object"||Array.isArray(S.items))S.items={};
   S.items.profile=Object.assign({},DEF,S.items.profile||{});}
 function lsSave(){try{localStorage.setItem(LS,JSON.stringify(S.items))}catch(e){flash("No se pudo guardar en este navegador.")}}
-function cfgLoad(){try{Object.assign(CFG,JSON.parse(localStorage.getItem(LC)||"{}"))}catch(e){}}
+function cfgLoad(){try{Object.assign(CFG,JSON.parse(localStorage.getItem(LC)||"{}"))}catch(e){}if(!CFG.model||CFG.model==="gemini-flash-latest")CFG.model="auto";if(!Array.isArray(CFG.models))CFG.models=[]}
 function cfgSave(){try{localStorage.setItem(LC,JSON.stringify(CFG))}catch(e){}}
 const prof=()=>S.items.profile;
 function put(id,data){S.items[id]=data;lsSave();render()}
@@ -363,41 +363,68 @@ function macroBar(label,v,goal){
 /* ================= IA gratuita: Google Gemini con tu propia clave ================= */
 function blobToB64(b){return new Promise((ok,ko)=>{const r=new FileReader();r.onload=()=>ok(String(r.result).split(",")[1]);r.onerror=ko;r.readAsDataURL(b)})}
 function aiErr(code,detail){const e=new Error(detail||code);e.code=code;e.detail=detail||"";return e}
+const GBASE="https://generativelanguage.googleapis.com/v1beta/";
+const FALLBACK_MODELS=["gemini-flash-latest","gemini-3.5-flash","gemini-3.5-flash-lite"];
+function gfetch(path,mode,init){
+  const url=GBASE+path+(mode==="query"?(path.includes("?")?"&":"?")+"key="+encodeURIComponent(CFG.key):"");
+  const h=Object.assign({},init&&init.headers);if(mode==="header")h["x-goog-api-key"]=CFG.key;
+  return fetch(url,Object.assign({},init,{headers:h}));
+}
+/* Pregunta a Google qué modelos de texto hay disponibles y elige los más recientes */
+async function listModels(){
+  for(const mode of ["header","query"]){
+    try{
+      const res=await gfetch("models?pageSize=200",mode);
+      if(!res.ok)continue;
+      const j=await res.json();
+      const names=(j.models||[]).filter(m=>(m.supportedGenerationMethods||[]).includes("generateContent")).map(m=>String(m.name||"").replace(/^models\//,""));
+      const ok=names.filter(n=>/^gemini-\d+(\.\d+)?-flash(-lite)?$/.test(n)).map(n=>{const m=n.match(/^gemini-(\d+(?:\.\d+)?)-flash(-lite)?$/);return {n,v:parseFloat(m[1]),lite:!!m[2]}})
+        .sort((a,b)=>b.v-a.v||a.lite-b.lite).map(x=>x.n);
+      const out=ok.slice(0,5);
+      if(names.includes("gemini-flash-latest"))out.push("gemini-flash-latest");
+      if(out.length){CFG.models=out;CFG.modelsAt=TODAY();cfgSave();return out}
+    }catch(e){}
+  }
+  return null;
+}
+async function modelCandidates(force){
+  const mine=CFG.model&&CFG.model!=="auto"?[CFG.model]:[];
+  let list=CFG.models;
+  if(force||!list||!list.length||!CFG.modelsAt||daysBetween(CFG.modelsAt,TODAY())>7)list=(await listModels())||list||FALLBACK_MODELS;
+  return mine.concat(list.filter(m=>!mine.includes(m)));
+}
 async function gemini(prompt,opts,asJson){
   if(!CFG.key)throw aiErr("no_key");
   const parts=[{text:prompt}];
   if(opts&&opts.images){for(const im of opts.images)parts.push({inline_data:{mime_type:"image/jpeg",data:await blobToB64(im)}})}
   const body={contents:[{role:"user",parts}]};
   if(asJson)body.generationConfig={responseMimeType:"application/json"};
-  const models=[CFG.model||"gemini-flash-latest"];
-  ["gemini-2.5-flash","gemini-2.5-flash-lite"].forEach(m=>{if(!models.includes(m))models.push(m)});
-  let last=null;
+  let last=null,refreshed=false,models=await modelCandidates(false),all404=true;
   for(let round=0;round<2;round++){
-  if(round===1){if(!last||(last.code!=="http"&&last.code!=="rate_limited"))break;await new Promise(r=>setTimeout(r,2500))}
-  for(const model of models){
-    const base="https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(model)+":generateContent";
-    /* primero con cabecera; si la clave es rechazada, se prueba con la clave en la dirección */
-    for(const mode of ["header","query"]){
-      let res;
-      try{
-        res=await fetch(mode==="header"?base:base+"?key="+encodeURIComponent(CFG.key),
-          {method:"POST",headers:mode==="header"?{"Content-Type":"application/json","x-goog-api-key":CFG.key}:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-      }catch(err){last=aiErr("network","No se pudo conectar con Google ("+(err&&err.message||"sin conexión")+")");continue}
-      if(res.ok){
-        const j=await res.json().catch(()=>null);
-        const cand=j&&(j.candidates||[])[0];
-        const text=cand&&cand.content&&(cand.content.parts||[]).map(p=>p.text||"").join("")||"";
-        if(!text){const why=(j&&j.promptFeedback&&j.promptFeedback.blockReason)||(cand&&cand.finishReason)||"respuesta vacía";throw aiErr("empty","Google no devolvió texto ("+why+")")}
-        return text;
+    if(round===1){if(!last||(last.code!=="http"&&last.code!=="rate_limited"))break;await new Promise(r=>setTimeout(r,2500))}
+    for(const model of models.slice(0,5)){
+      for(const mode of ["header","query"]){
+        let res;
+        try{res=await gfetch("models/"+encodeURIComponent(model)+":generateContent",mode,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)})}
+        catch(err){last=aiErr("network","No se pudo conectar con Google ("+(err&&err.message||"sin conexión")+")");all404=false;continue}
+        if(res.ok){
+          const j=await res.json().catch(()=>null);
+          const cand=j&&(j.candidates||[])[0];
+          const text=cand&&cand.content&&(cand.content.parts||[]).map(p=>p.text||"").join("")||"";
+          if(!text){const why=(j&&j.promptFeedback&&j.promptFeedback.blockReason)||(cand&&cand.finishReason)||"respuesta vacía";throw aiErr("empty","Google no devolvió texto ("+why+")")}
+          return text;
+        }
+        let msg="";try{const j=await res.json();msg=(j.error&&j.error.message)||""}catch(e){}
+        const code=res.status===429?"rate_limited":res.status===404?"no_model":(res.status===400||res.status===401||res.status===403)?"bad_key":"http";
+        last=aiErr(code,"Google respondió "+res.status+(msg?": "+msg.slice(0,220):""));
+        if(res.status!==404)all404=false;
+        if(res.status===404||res.status===429||res.status>=500)break;
       }
-      let msg="";try{const j=await res.json();msg=(j.error&&j.error.message)||""}catch(e){}
-      const code=res.status===429?"rate_limited":res.status===404?"no_model":(res.status===400||res.status===401||res.status===403)?"bad_key":"http";
-      last=aiErr(code,"Google respondió "+res.status+(msg?": "+msg.slice(0,220):""));
-      if(res.status===404||res.status===429||res.status>=500)break;   /* probar otro modelo */
     }
+    /* si todos los modelos dieron 404, la lista estaba vieja: se vuelve a pedir una vez */
+    if(all404&&!refreshed){refreshed=true;const fresh=await listModels();if(fresh){models=await modelCandidates(false);round=-1;last=null;all404=true;continue}}
   }
-  }
-  if(last&&(last.code==="http"||last.code==="rate_limited"))last.detail="Google está saturado ahora mismo (probé "+models.length+" modelos). Inténtalo de nuevo en unos minutos. "+last.detail;
+  if(last&&(last.code==="http"||last.code==="rate_limited"))last.detail="Google está saturado ahora mismo. Inténtalo de nuevo en unos minutos. "+last.detail;
   throw last||aiErr("network","No se pudo conectar con Google");
 }
 function makeSample(){
@@ -825,7 +852,7 @@ function viewAjustes(){
    '<p class="muted">Gasto estimado: <b>'+tdee()+' kcal</b> con tu peso actual ('+r1(curWeight())+' kg). Para perder grasa a buen ritmo: unas <b>'+(tdee()-450)+' kcal</b> y '+Math.round(curWeight()*1.8)+' g de proteína.</p>'+
    '<div class="row"><button data-act="applyCalc">Usar valores recomendados</button><button class="pri" data-act="saveProfile">Guardar</button></div></div>'+
   '<div class="card"><h2>IA gratuita (Gemini)</h2><p class="muted">Consigue tu clave en aistudio.google.com/apikey con una cuenta de Google y pulsa «Crear clave de API». Se guarda solo en este dispositivo. Google puede usar lo que envíes para mejorar sus productos con claves gratuitas, así que no subas nada privado.</p>'+
-   '<div class="row"><div class="grow" style="flex-basis:220px"><label for="c_key">Clave de Gemini</label><input id="c_key" data-c="key" type="password" autocomplete="off" value="'+esc(CFG.key)+'" placeholder="AIza..."></div><div class="grow"><label for="c_model">Modelo</label><input id="c_model" data-c="model" value="'+esc(CFG.model)+'"></div></div>'+
+   '<div class="row"><div class="grow" style="flex-basis:220px"><label for="c_key">Clave de Gemini</label><input id="c_key" data-c="key" type="password" autocomplete="off" value="'+esc(CFG.key)+'" placeholder="AIza..."></div><div class="grow"><label for="c_model">Modelo (auto = el mejor disponible)</label><input id="c_model" data-c="model" value="'+esc(CFG.model)+'"></div></div>'+
    '<div class="row" style="margin-top:12px"><button class="pri" data-act="saveCfg">Guardar ajustes de IA</button><button data-act="testAI"'+(S.busy.test?" disabled":"")+'>'+(S.busy.test?"Probando…":"Probar la IA")+'</button></div>'+(S.testRes?'<p class="'+(S.testRes.ok?"ai":"muted")+'" role="status">'+esc(S.testRes.msg)+'</p>':"")+errP("test")+'</div>'+
   '<div class="card"><h2>Copia de seguridad</h2><p class="muted">Tus datos viven en este navegador y no se sincronizan con otros dispositivos. Descarga una copia de vez en cuando, y úsala para pasarlos a otro móvil.'+(CFG.lastExport?" Última copia: "+esc(sdate(CFG.lastExport))+".":"")+'</p>'+
    '<div class="row"><button class="pri" data-act="export">Descargar copia</button><button data-act="import">Cargar copia</button><input id="importFile" type="file" accept="application/json,.json" hidden></div>'+
@@ -909,9 +936,9 @@ document.addEventListener("click",async e=>{
     case "applyCalc":p.kcal=tdee()-450;p.prot=Math.round(curWeight()*1.8);lsSave();render();break;
     case "saveProfile":lsSave();flash("Perfil guardado.");render();break;
     case "saveCfg":cfgSave();flash("Ajustes de IA guardados.");break;
-    case "testAI":{cfgSave();S.testRes=null;
+    case "testAI":{cfgSave();CFG.modelsAt="";S.testRes=null;
       const r=await ai(()=>sample("Responde solo con la palabra: listo"),"test");
-      if(r)S.testRes={ok:true,msg:"La IA funciona. Respuesta: "+r.text.trim().slice(0,40)};else S.testRes=null;render();break}
+      if(r)S.testRes={ok:true,msg:"La IA funciona. Respuesta: "+r.text.trim().slice(0,40)+(CFG.models&&CFG.models.length?" · Modelos disponibles: "+CFG.models.slice(0,3).join(", "):"")};else S.testRes=null;render();break}
     case "export":download("mi-vida-"+TODAY()+".json",JSON.stringify(S.items),"application/json");CFG.lastExport=TODAY();cfgSave();render();break;
     case "import":$("#importFile").click();break;
     case "analyze":analyzeMeal();break;
